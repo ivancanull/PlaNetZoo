@@ -28,6 +28,7 @@ class DoubleConv(nn.Module):
                  activation_layer: Optional[Callable[..., torch.nn.Module]] = torch.nn.ReLU,
                  inplace: Optional[bool] = None,
                  bias: bool = True,
+                 groups: int = 1 # support group conv for multiple timesteps
                  ):
         
         super().__init__()
@@ -36,12 +37,12 @@ class DoubleConv(nn.Module):
         
         layers = []
 
-        layers.append(nn.Conv2d(in_channels, mid_channels, kernel_size=kernel_size, padding=padding, bias=bias))
+        layers.append(nn.Conv2d(in_channels, mid_channels, kernel_size=kernel_size, padding=padding, bias=bias, groups=groups))
         if norm_layer is not None:
             layers.append(norm_layer(mid_channels))
         layers.append(activation_layer(inplace=inplace))
 
-        layers.append(nn.Conv2d(mid_channels, out_channels, kernel_size=kernel_size, padding=padding, bias=bias))
+        layers.append(nn.Conv2d(mid_channels, out_channels, kernel_size=kernel_size, padding=padding, bias=bias, groups=groups))
         if norm_layer is not None:
             layers.append(norm_layer(out_channels))
         layers.append(activation_layer(inplace=inplace))
@@ -134,8 +135,9 @@ class Up(nn.Module):
         x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
                         diffY // 2, diffY - diffY // 2])
         
-        x = torch.cat([x2, x1], dim=1)
-        return self.conv(x)
+        x1 = torch.cat([x2, x1], dim=1)
+        return self.conv(x1)
+
 
 
 class OutConv(nn.Module):

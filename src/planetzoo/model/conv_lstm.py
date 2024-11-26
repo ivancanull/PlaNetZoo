@@ -241,6 +241,16 @@ class ConvLSTM(nn.Module):
             init_states.append(self.conv_lstm[i].init_hidden(batch_size, image_size))
         return init_states
 
+    def initialize_weights(self, 
+                           initial_func: Optional[Callable] = torch.nn.init.kaiming_normal_,
+                           func_args: Optional[dict] = None,):
+
+        layer_types = [nn.Conv2d, nn.ConvTranspose2d, nn.Linear]
+        for m in self.modules():
+            if any(isinstance(m, layer) for layer in layer_types):
+                initial_func(m.weight.data, **func_args)
+                if m.bias is not None:
+                    torch.nn.init.zeros_(m.bias.data)
 
 if __name__ == "__main__":
     # test example
