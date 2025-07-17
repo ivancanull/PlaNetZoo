@@ -162,5 +162,20 @@ cython_debug/
 #.idea/
 
 # test func
-test.py
+# Test functions and test cache
+test_*.py
+tests/
+.pytest_cache/
+pytest_cache/
+
+# Output and log files
+nohup.out
+*.log
+*.out
+
+# Model checkpoints
+checkpoints/
+*.pth
+*.ckpt
+
 
