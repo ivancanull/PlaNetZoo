@@ -66,10 +66,101 @@ def validate(model, val_loader, criterion, device):
     return val_loss, val_acc
 
 
+def build_model(model_type='alexnet', num_classes=10, quantization=None, device='cpu', **kwargs):
+    """
+    Build model with optional quantization support
+    
+    Args:
+        model_type (str): Type of model ('alexnet', 'resnet', etc.)
+        num_classes (int): Number of output classes
+        quantization (str): Quantization type ('dynamic', 'static', 'qat', None)
+        device (str): Device to place model on
+        **kwargs: Additional model-specific parameters
+    
+    Returns:
+        torch.nn.Module: The built model
+    """
+    
+    # Model configuration based on type
+    if model_type.lower() == 'alexnet':
+        model_config = {
+            'num_classes': num_classes,
+            'input_channels': kwargs.get('input_channels', 3),
+            'hidden_channels': kwargs.get('hidden_channels', [64, 192, 384, 256, 256]),
+            'kernel_sizes': kwargs.get('kernel_sizes', [3, 3, 3, 3, 3]),
+            'hstrides': kwargs.get('hstrides', [1, 1, 1, 1, 1]),
+            'wstrides': kwargs.get('wstrides', [1, 1, 1, 1, 1]),
+            'linear_sizes': kwargs.get('linear_sizes', [1024, 512]),
+            'dropout': kwargs.get('dropout', 0.5)
+        }
+        model = AlexNet(**model_config)
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+    
+    # Apply quantization if specified
+    if quantization is not None:
+        model = apply_quantization(model, quantization, device)
+    
+    model = model.to(device)
+    
+    print(f"Model '{model_type}' created with {sum(p.numel() for p in model.parameters())} parameters")
+    if quantization:
+        print(f"Quantization applied: {quantization}")
+    
+    return model
+
+
+def apply_quantization(model, quantization_type, device='cpu'):
+    """
+    Apply quantization to the model
+    
+    Args:
+        model (torch.nn.Module): Model to quantize
+        quantization_type (str): Type of quantization ('dynamic', 'static', 'qat')
+        device (str): Device for quantization
+    
+    Returns:
+        torch.nn.Module: Quantized model
+    """
+    
+    if quantization_type.lower() == 'dynamic':
+        # Dynamic quantization - quantize weights, activations computed in FP32
+        model_quantized = torch.quantization.quantize_dynamic(
+            model, 
+            {nn.Linear, nn.Conv2d}, 
+            dtype=torch.qint8
+        )
+        return model_quantized
+        
+    elif quantization_type.lower() == 'static':
+        # Static quantization - requires calibration data
+        model.eval()
+        model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+        model_prepared = torch.quantization.prepare(model)
+        print("Warning: Static quantization requires calibration data. "
+              "Model prepared but not quantized. Call torch.quantization.convert() after calibration.")
+        return model_prepared
+        
+    elif quantization_type.lower() == 'qat':
+        # Quantization Aware Training
+        model.train()
+        model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+        model_prepared = torch.quantization.prepare_qat(model)
+        print("Model prepared for Quantization Aware Training")
+        return model_prepared
+        
+    else:
+        raise ValueError(f"Unsupported quantization type: {quantization_type}")
+
+
 def main():
     # Argument parser for checkpoint resume
     parser = argparse.ArgumentParser(description='Train AlexNet on CIFAR-10 with checkpoint resume')
     parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume from')
+    parser.add_argument('--model', type=str, default='alexnet', help='Model type to train')
+    parser.add_argument('--quantization', type=str, default=None, 
+                       choices=['dynamic', 'static', 'qat'], 
+                       help='Quantization type to apply')
     args = parser.parse_args()
 
     # Training configuration
@@ -81,6 +172,8 @@ def main():
         'num_workers': 4,
         'save_dir': './checkpoints',
         'save_every': 10,  # Save model every N epochs
+        'model_type': args.model,
+        'quantization': args.quantization,
     }
     # Add TensorBoard SummaryWriter for monitoring
     from torch.utils.tensorboard.writer import SummaryWriter
@@ -140,8 +233,11 @@ def main():
     )
     
     # Initialize model for CIFAR-10 (10 classes, smaller input size)
-    model = AlexNet(
+    model = build_model(
+        model_type=config['model_type'],
         num_classes=10,
+        quantization=config['quantization'],
+        device=device,
         input_channels=3,
         hidden_channels=[64, 192, 384, 256, 256],
         kernel_sizes=[3, 3, 3, 3, 3],  # Smaller kernels for 32x32 images
@@ -149,9 +245,7 @@ def main():
         wstrides=[1, 1, 1, 1, 1],
         linear_sizes=[1024, 512],      # Smaller linear layers
         dropout=0.5
-    ).to(device)
-    
-    print(f"Model created with {sum(p.numel() for p in model.parameters())} parameters")
+    )
     
     # Loss function and optimizer
     criterion = nn.CrossEntropyLoss()

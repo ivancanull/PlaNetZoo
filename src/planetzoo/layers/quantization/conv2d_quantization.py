@@ -60,7 +60,14 @@ class Conv2dQuantization(nn.Module):
     
     def reset_parameters(self):
         """Initialize parameters using Kaiming uniform initialization."""
-        nn.init.kaiming_uniform_(self.weight)
+        if self.signed:
+            nn.init.kaiming_uniform_(self.weight, a=5 ** 0.5)
+        else:
+            # For unsigned quantization, use non-negative initialization
+            nn.init.kaiming_uniform_(self.weight, a=5 ** 0.5, nonlinearity='relu')
+            # Ensure weights are non-negative for unsigned quantization
+            with torch.no_grad():
+                self.weight.data = torch.abs(self.weight.data)
         if self.bias is not None:
             nn.init.constant_(self.bias, 0)
     

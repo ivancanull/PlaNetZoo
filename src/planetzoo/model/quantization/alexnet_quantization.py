@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from typing import List, Optional
-from ...layers.quantization.conv2d_quantization import Conv2dQuantization
-from ...layers.quantization.linear_quantization import LinearQuantization
+from ...layers.quantization.conv2d_quantization import Conv2dQuantization, STEConv2dQuantization
+from ...layers.quantization.linear_quantization import LinearQuantization, STELinearQuantization
 
 
 class QuantizedAlexNet(nn.Module):
@@ -17,7 +17,7 @@ class QuantizedAlexNet(nn.Module):
         linear_sizes: Optional[List[int]] = None,
         dropout: float = 0.5,
         weight_bits: int = 8,
-        quantization_backend: str = 'fbgemm'
+        signed: bool = True,
     ):
         """
         Quantized AlexNet with configurable convolutional kernel sizes, strides, channels, and linear layer sizes.
@@ -37,7 +37,7 @@ class QuantizedAlexNet(nn.Module):
                          Default: [4096, 4096]
             dropout: Dropout probability for classifier layers
             weight_bits: Number of bits for weight quantization
-            quantization_backend: Quantization backend ('fbgemm' for x86, 'qnnpack' for mobile)
+            signed: Whether to use signed quantization
         """
         super(QuantizedAlexNet, self).__init__()
         
@@ -64,7 +64,7 @@ class QuantizedAlexNet(nn.Module):
             raise ValueError("linear_sizes must contain exactly 2 values")
         
         self.weight_bits = weight_bits
-        self.quantization_backend = quantization_backend
+        self.signed = signed
         
         # Calculate input channels for each layer
         in_channels = [input_channels] + hidden_channels[:-1]
@@ -72,30 +72,30 @@ class QuantizedAlexNet(nn.Module):
         # Feature extraction layers with quantized convolutions
         self.features = nn.Sequential(
             # Conv1
-            Conv2dQuantization(in_channels[0], hidden_channels[0], kernel_size=kernel_sizes[0], 
-                             stride=(hstrides[0], wstrides[0]), padding=2, weight_bits=weight_bits),
+            STEConv2dQuantization(in_channels[0], hidden_channels[0], kernel_size=kernel_sizes[0], 
+                     stride=(hstrides[0], wstrides[0]), padding=2, weight_bits=weight_bits, signed=signed),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
             
             # Conv2
-            Conv2dQuantization(in_channels[1], hidden_channels[1], kernel_size=kernel_sizes[1], 
-                             stride=(hstrides[1], wstrides[1]), padding=2, weight_bits=weight_bits),
+            STEConv2dQuantization(in_channels[1], hidden_channels[1], kernel_size=kernel_sizes[1], 
+                     stride=(hstrides[1], wstrides[1]), padding=2, weight_bits=weight_bits, signed=signed),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
             
             # Conv3
-            Conv2dQuantization(in_channels[2], hidden_channels[2], kernel_size=kernel_sizes[2], 
-                             stride=(hstrides[2], wstrides[2]), padding=1, weight_bits=weight_bits),
+            STEConv2dQuantization(in_channels[2], hidden_channels[2], kernel_size=kernel_sizes[2], 
+                     stride=(hstrides[2], wstrides[2]), padding=1, weight_bits=weight_bits, signed=signed),
             nn.ReLU(inplace=True),
             
             # Conv4
-            Conv2dQuantization(in_channels[3], hidden_channels[3], kernel_size=kernel_sizes[3], 
-                             stride=(hstrides[3], wstrides[3]), padding=1, weight_bits=weight_bits),
+            STEConv2dQuantization(in_channels[3], hidden_channels[3], kernel_size=kernel_sizes[3], 
+                     stride=(hstrides[3], wstrides[3]), padding=1, weight_bits=weight_bits, signed=signed),
             nn.ReLU(inplace=True),
             
             # Conv5
-            Conv2dQuantization(in_channels[4], hidden_channels[4], kernel_size=kernel_sizes[4], 
-                             stride=(hstrides[4], wstrides[4]), padding=1, weight_bits=weight_bits),
+            STEConv2dQuantization(in_channels[4], hidden_channels[4], kernel_size=kernel_sizes[4], 
+                     stride=(hstrides[4], wstrides[4]), padding=1, weight_bits=weight_bits, signed=signed),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=3, stride=2),
         )
@@ -109,12 +109,12 @@ class QuantizedAlexNet(nn.Module):
         
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
-            LinearQuantization(input_features, linear_sizes[0], weight_bits=weight_bits),
+            STELinearQuantization(input_features, linear_sizes[0], weight_bits=weight_bits, signed=signed),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
-            LinearQuantization(linear_sizes[0], linear_sizes[1], weight_bits=weight_bits),
+            STELinearQuantization(linear_sizes[0], linear_sizes[1], weight_bits=weight_bits, signed=signed),
             nn.ReLU(inplace=True),
-            LinearQuantization(linear_sizes[1], num_classes, weight_bits=weight_bits),
+            STELinearQuantization(linear_sizes[1], num_classes, weight_bits=weight_bits, signed=signed),
         )
         
         # Initialize weights
@@ -129,11 +129,11 @@ class QuantizedAlexNet(nn.Module):
     
     def _initialize_weights(self):
         for m in self.modules():
-            if isinstance(m, (Conv2dQuantization, nn.Conv2d)):
+            if isinstance(m, (Conv2dQuantization, STEConv2dQuantization, nn.Conv2d)):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-            elif isinstance(m, (LinearQuantization, nn.Linear)):
+            elif isinstance(m, (LinearQuantization, STELinearQuantization,nn.Linear)):
                 nn.init.normal_(m.weight, 0, 0.01)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)

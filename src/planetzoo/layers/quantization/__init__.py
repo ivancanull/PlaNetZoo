@@ -1,2 +1,2 @@
-from .conv2d_quantization import Conv2dQuantization
-from .linear_quantization import LinearQuantization
+# quantization subpackage initialization
+from .conv2d_quantization import *
