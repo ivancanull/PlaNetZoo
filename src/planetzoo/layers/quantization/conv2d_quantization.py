@@ -19,6 +19,7 @@ class Conv2dQuantization(nn.Module):
         weight_bits: Number of bits for weight quantization (default: 8)
         bias: Whether to use bias (default: True)
         signed: Whether to use signed quantization (default: True)
+        freeze: Whether to freeze quantization and use as normal conv2d layer (default: False)
     """
     
     def __init__(
@@ -32,7 +33,8 @@ class Conv2dQuantization(nn.Module):
         groups: int = 1,
         weight_bits: int = 8,
         bias: bool = True,
-        signed: bool = True
+        signed: bool = True,
+        freeze: bool = False
     ):
         super(Conv2dQuantization, self).__init__()
         
@@ -45,6 +47,7 @@ class Conv2dQuantization(nn.Module):
         self.groups = groups
         self.weight_bits = weight_bits
         self.signed = signed
+        self.freeze = freeze
         
         # Initialize weight and bias
         self.weight = nn.Parameter(torch.randn(out_channels, in_channels // groups, *self.kernel_size))
@@ -57,6 +60,15 @@ class Conv2dQuantization(nn.Module):
         self.weight_scale = nn.Parameter(torch.ones(1))
         
         self.reset_parameters()
+    
+    def set_freeze(self, freeze: bool):
+        """
+        Set the freeze state of the quantization.
+        
+        Args:
+            freeze: Whether to freeze quantization and use as normal conv2d layer
+        """
+        self.freeze = freeze
     
     def reset_parameters(self):
         """Initialize parameters using Kaiming uniform initialization."""
@@ -117,7 +129,7 @@ class Conv2dQuantization(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass with quantized weights.
+        Forward pass with quantized weights or normal conv2d layer.
         
         Args:
             x: Input tensor
@@ -125,28 +137,38 @@ class Conv2dQuantization(nn.Module):
         Returns:
             Output tensor
         """
-        # Update weight scale during training
-        if self.training:
-            self.weight_scale.data = self.update_scale(self.weight, self.weight_bits)
-        
-        # Quantize weights
-        weight_quantized = self.quantize(self.weight, self.weight_bits, self.weight_scale)
-        
-        # Perform convolution
-        return F.conv2d(
-            x, weight_quantized, self.bias,
-            stride=self.stride,
-            padding=self.padding,
-            dilation=self.dilation,
-            groups=self.groups
-        )
+        if self.freeze:
+            # Use as normal conv2d layer without quantization (full precision)
+            return F.conv2d(
+                x, self.weight, self.bias,
+                stride=self.stride,
+                padding=self.padding,
+                dilation=self.dilation,
+                groups=self.groups
+            )
+        else:
+            # Update weight scale during training
+            if self.training:
+                self.weight_scale.data = self.update_scale(self.weight, self.weight_bits)
+            
+            # Quantize weights
+            weight_quantized = self.quantize(self.weight, self.weight_bits, self.weight_scale)
+            
+            # Perform convolution with quantized weights
+            return F.conv2d(
+                x, weight_quantized, self.bias,
+                stride=self.stride,
+                padding=self.padding,
+                dilation=self.dilation,
+                groups=self.groups
+            )
     
     def extra_repr(self) -> str:
         """Return extra representation string for the module."""
         return (f'{self.in_channels}, {self.out_channels}, kernel_size={self.kernel_size}, '
                 f'stride={self.stride}, padding={self.padding}, dilation={self.dilation}, '
                 f'groups={self.groups}, weight_bits={self.weight_bits}, '
-                f'bias={self.bias is not None}, signed={self.signed}')
+                f'bias={self.bias is not None}, signed={self.signed}, freeze={self.freeze}')
 
 
 class StraightThroughEstimator(torch.autograd.Function):
